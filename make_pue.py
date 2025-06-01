@@ -1,9 +1,11 @@
 import argparse
 import collections
+from dataclasses import dataclass, field
 import datetime
 import os
 import shutil
 import time
+from typing import List
 import dataset
 import mlconfig
 import toolbox
@@ -16,45 +18,50 @@ from tqdm import tqdm
 from trainer import Trainer
 mlconfig.register(madrys.MadrysLoss)
 
-# General Options
-parser = argparse.ArgumentParser(description='Make PUE Noise')
-parser.add_argument('--seed', type=int, default=0, help='seed')
-parser.add_argument('--version', type=str, default="resnet18")
-parser.add_argument('--exp_name', type=str, default="test_exp")
-parser.add_argument('--config_path', type=str, default='configs/cifar10')
-parser.add_argument('--load_model', action='store_true', default=False)
-parser.add_argument('--data_parallel', action='store_true', default=False)
-# Datasets Options
-parser.add_argument('--train_batch_size', default=128, type=int, help='perturb step size')
-parser.add_argument('--eval_batch_size', default=512, type=int, help='perturb step size')
-parser.add_argument('--num_of_workers', default=8, type=int, help='workers for loader')
-parser.add_argument('--train_data_type', type=str, default='CIFAR10')
-parser.add_argument('--train_data_path', type=str, default='../datasets')
-parser.add_argument('--test_data_type', type=str, default='CIFAR10')
-parser.add_argument('--test_data_path', type=str, default='../datasets')
-# Perturbation Options
-parser.add_argument('--universal_train_portion', default=0.2, type=float)
-parser.add_argument('--universal_stop_error', default=0.5, type=float)
-parser.add_argument('--universal_train_target', default='train_subset', type=str)
-parser.add_argument('--train_step', default=10, type=int)
-parser.add_argument('--use_subset', action='store_true', default=False)
-parser.add_argument('--attack_type', default='min-min', type=str, choices=['min-min', 'min-max', 'random'], help='Attack type')
-parser.add_argument('--perturb_type', default='classwise', type=str, choices=['classwise', 'samplewise'], help='Perturb type')
-parser.add_argument('--patch_location', default='center', type=str, choices=['center', 'random'], help='Location of the noise')
-parser.add_argument('--noise_shape', default=[10, 3, 32, 32], nargs='+', type=int, help='noise shape')
-parser.add_argument('--epsilon', default=8, type=float, help='perturbation')
-parser.add_argument('--num_steps', default=1, type=int, help='perturb number of steps')
-parser.add_argument('--step_size', default=0.8, type=float, help='perturb step size')
-parser.add_argument('--random_start', action='store_true', default=False)
-# Classifier Options
-parser.add_argument('--pue', action='store_true', default=False, help='PUE')
-parser.add_argument('--pueb', action='store_true', default=False, help='PUE Baseline')
-parser.add_argument("--robust_noise", default=1.0, type=float)
-parser.add_argument("--robust_noise_step", default=0.05, type=float)
-parser.add_argument("--avgtimes", default=100, type=int)
-parser.add_argument("--avgtimes_perturb", default=10, type=int)
-parser.add_argument("--turn_on_robust", default=99999, type=int, help='The epoch to turn on train noise')
-args = parser.parse_args()
+@dataclass
+class PUEConfig:
+    # General Options
+    seed: int = 0
+    version: str = "resnet18"
+    exp_name: str = "test_exp"
+    config_path: str = 'configs/cifar10'
+    load_model: bool = False
+    data_parallel: bool = False
+
+    # Datasets Options
+    train_batch_size: int = 128
+    eval_batch_size: int = 512
+    num_of_workers: int = 8
+    train_data_type: str = 'CIFAR10'
+    train_data_path: str = '../datasets'
+    test_data_type: str = 'CIFAR10'
+    test_data_path: str = '../datasets'
+
+    # Perturbation Options
+    universal_train_portion: float = 0.2
+    universal_stop_error: float = 0.5
+    universal_train_target: str = 'train_subset'
+    train_step: int = 10
+    use_subset: bool = False
+    attack_type: str = 'min-min'
+    perturb_type: str = 'classwise'
+    patch_location: str = 'center'
+    noise_shape: List[int] = field(default_factory=lambda: [10, 3, 32, 32])
+    epsilon: float = 8.0
+    num_steps: int = 1
+    step_size: float = 0.8
+    random_start: bool = False
+
+    # Classifier Options
+    pue: bool = False
+    pueb: bool = False
+    robust_noise: float = 1.0
+    robust_noise_step: float = 0.05
+    avgtimes: int = 100
+    avgtimes_perturb: int = 10
+    turn_on_robust: int = 99999
+
+args = PUEConfig()
 
 # Convert Eps
 args.epsilon = args.epsilon / 255
@@ -93,7 +100,7 @@ for key in config:
 shutil.copyfile(config_file, os.path.join(exp_path, args.version+'.yaml'))
 
 
-def train(starting_epoch, model, optimizer, scheduler, trainer, evaluator, ENV):
+def train(starting_epoch, model, optimizer, scheduler, trainer, evaluator, ENV, args: PUEConfig):
     for epoch in range(starting_epoch, config.epochs):
         logger.info("")
         logger.info("="*20 + "Training Epoch %d" % (epoch) + "="*20)
@@ -129,12 +136,12 @@ def train(starting_epoch, model, optimizer, scheduler, trainer, evaluator, ENV):
     return
 
 
-def universal_perturbation_eval(noise_generator, random_noise, data_loader, model, eval_target=args.universal_train_target):
+def universal_perturbation_eval(noise_generator, random_noise, data_loader, model, args: PUEConfig):
     loss_meter = util.AverageMeter()
     err_meter = util.AverageMeter()
     random_noise = random_noise.to(device)
     model = model.to(device)
-    for i, (images, labels) in enumerate(data_loader[eval_target]):
+    for i, (images, labels) in enumerate(data_loader[args.universal_train_target]):
         images, labels = images.to(device, non_blocking=True), labels.to(device, non_blocking=True)
         if random_noise is not None:
             for i in range(len(labels)):
@@ -150,7 +157,7 @@ def universal_perturbation_eval(noise_generator, random_noise, data_loader, mode
     return loss_meter.avg, err_meter.avg
 
 
-def universal_perturbation(noise_generator, trainer, evaluator, model, criterion, optimizer, scheduler, random_noise, ENV):
+def universal_perturbation(noise_generator, trainer, evaluator, model, criterion, optimizer, scheduler, random_noise, ENV, args: PUEConfig):
     # Class-Wise perturbation
     # Generate Data loader
     datasets_generator = dataset.DatasetGenerator(train_batch_size=args.train_batch_size,
@@ -293,7 +300,7 @@ def samplewise_perturbation_eval(random_noise, data_loader, model, eval_target='
     return loss_meter.avg, err_meter.avg
 
 
-def sample_wise_perturbation(noise_generator, trainer, evaluator, model, criterion, optimizer, scheduler, random_noise, ENV):
+def sample_wise_perturbation(noise_generator, trainer, evaluator, model, criterion, optimizer, scheduler, random_noise, ENV, args: PUEConfig):
     datasets_generator = dataset.DatasetGenerator(train_batch_size=args.train_batch_size,
                                                   eval_batch_size=args.eval_batch_size,
                                                   train_data_type=args.train_data_type,
@@ -444,7 +451,7 @@ def sample_wise_perturbation(noise_generator, trainer, evaluator, model, criteri
         return random_noise
 
 
-def main():
+def make_pue(args: PUEConfig):
     # Setup ENV
     datasets_generator = dataset.DatasetGenerator(train_batch_size=args.train_batch_size,
                                                   eval_batch_size=args.eval_batch_size,
@@ -508,15 +515,15 @@ def main():
     elif args.attack_type == 'min-min' or args.attack_type == 'min-max':
         if args.attack_type == 'min-max':
             # min-max noise need model to converge first
-            train(0, model, optimizer, scheduler, trainer, evaluator, ENV, data_loader)
+            train(starting_epoch=0, model=model, optimizer=optimizer, scheduler=scheduler, trainer=trainer, evaluator=evaluator, ENV=ENV, args=args)
         if args.random_start:
             random_noise = noise_generator.random_noise(noise_shape=args.noise_shape)
         else:
             random_noise = torch.zeros(*args.noise_shape)
         if args.perturb_type == 'samplewise':
-            noise = sample_wise_perturbation(noise_generator, trainer, evaluator, model, criterion, optimizer, scheduler, random_noise, ENV)
+            noise = sample_wise_perturbation(noise_generator=noise_generator, trainer=trainer, evaluator=evaluator, model=model, criterion=criterion, optimizer=optimizer, scheduler=scheduler, random_noise=random_noise, ENV=ENV, args=args)
         elif args.perturb_type == 'classwise':
-            noise = universal_perturbation(noise_generator, trainer, evaluator, model, criterion, optimizer, scheduler, random_noise, ENV)
+            noise = universal_perturbation(noise_generator=noise_generator, trainer=trainer, evaluator=evaluator, model=model, criterion=criterion, optimizer=optimizer, scheduler=scheduler, random_noise=random_noise, ENV=ENV, args=args)
         # Save perturbation
         torch.save(noise, os.path.join(args.exp_name, 'perturbation.pt'))
         logger.info(noise)
@@ -538,10 +545,9 @@ def main():
 
 
 if __name__ == '__main__':
-    for arg in vars(args):
-        logger.info("%s: %s" % (arg, getattr(args, arg)))
+    args = PUEConfig()
     start = time.time()
-    main()
+    make_pue(args=args)
     end = time.time()
     cost = (end - start) / 86400
     payload = "Running Cost %.2f Days \n" % cost
