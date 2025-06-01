@@ -259,7 +259,7 @@ def universal_perturbation(noise_generator, trainer, evaluator, model, criterion
                 random_noise[key] = torch.clamp(class_noise, -args.epsilon, args.epsilon)
 
         # Eval termination conditions
-        loss_avg, error_rate = universal_perturbation_eval(noise_generator, random_noise, data_loader, model, eval_target=args.universal_train_target)
+        loss_avg, error_rate = universal_perturbation_eval(noise_generator=noise_generator, random_noise=random_noise, data_loader=data_loader, model=model, args=args)
         logger.info('Loss: {:.4f} Acc: {:.2f}%'.format(loss_avg, 100 - error_rate*100))
         random_noise = random_noise.detach()
         ENV['random_noise'] = random_noise
