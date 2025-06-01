@@ -1,4 +1,3 @@
-import argparse
 import collections
 from dataclasses import dataclass, field
 import datetime
@@ -60,6 +59,10 @@ class PUEConfig:
     avgtimes: int = 100
     avgtimes_perturb: int = 10
     turn_on_robust: int = 99999
+    
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
 args = PUEConfig()
 
